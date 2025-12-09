@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8' />
+    <title>Madrid: La Paradoja de la Renta</title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.css' rel='stylesheet' />
+    <script src="https://cdn.jsdelivr.net/npm/mapbox-gl-globe-minimap@1.2.0/dist/bundle.js"></script>
+    <script src="https://unpkg.com/scrollama"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+        a, a:hover, a:visited { color: #e96125; }
+        #map { top: 0; height: 100vh; width: 100vw; position: fixed; }
+        
+        /* ESTILOS DE LA HISTORIA */
+        #header { margin: auto; width: 100%; position: relative; z-index: 5; background-color: #1a1a1a; color: white; padding: 4vh 2vw; text-align: center; }
+        #footer { width: 100%; min-height: 5vh; padding: 20px; text-align: center; line-height: 25px; font-size: 13px; position: relative; z-index: 5; background-color: #1a1a1a; color: white; }
+        #features { padding-top: 10vh; padding-bottom: 10vh; }
+        .hidden { visibility: hidden; }
+        .centered { width: 50vw; margin: 0 auto; }
+        .lefty { width: 33vw; margin-left: 5vw; }
+        .righty { width: 33vw; margin-left: 62vw; }
+        .fully { width: 100%; margin: auto; }
+        .light { color: #444; background-color: #fafafa; }
+        .dark { color: #fafafa; background-color: #444; }
+        .step { padding-bottom: 50vh; opacity: 0.25; transition: opacity 0.5s; }
+        .step.active { opacity: 0.95; }
+        .step div { padding: 25px 50px; line-height: 25px; font-size: 15px; border-radius: 5px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); background: rgba(255,255,255,0.95); color: #333; }
+        .step img { width: 100%; border-radius: 3px; margin-top: 15px; }
+
+        /* ESTILO LEYENDA */
+        #legend {
+            position: fixed; bottom: 30px; right: 30px; width: 220px;
+            background: rgba(255, 255, 255, 0.95); padding: 15px;
+            border-radius: 8px; z-index: 10; font-family: sans-serif;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2); display: none;
+        }
+        #legend h4 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; color: #333; }
+        .legend-gradient { height: 12px; width: 100%; border-radius: 6px; margin-bottom: 5px; }
+        .legend-labels { display: flex; justify-content: space-between; font-size: 12px; color: #666; }
+
+        /* ESTILO POPUPS */
+        .mapboxgl-popup { max-width: 400px; font: 12px/20px 'Helvetica Neue', Arial, Helvetica, sans-serif; color: #333; }
+        .mapboxgl-popup-content { padding: 15px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); border-left: 5px solid #333; }
+        .mapboxgl-popup h3 { margin: 0 0 5px; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+
+        @media (max-width: 750px) {
+            .centered, .lefty, .righty, .fully { width: 90vw; margin: 0 auto; }
+            #legend { bottom: 10px; right: 10px; width: 150px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div id="legend">
+        <h4 id="legend-title">Indicador</h4>
+        <div class="legend-gradient" id="legend-bar"></div>
+        <div class="legend-labels">
+            <span id="legend-min">Bajo</span>
+            <span id="legend-max">Alto</span>
+        </div>
+    </div>
+
+    <div id="story"></div>
+
+    <script src="./config.js"></script>
+    <script>
+        var layerTypes = { 'fill': ['fill-opacity'], 'line': ['line-opacity'], 'circle': ['circle-opacity', 'circle-stroke-opacity'], 'symbol': ['icon-opacity', 'text-opacity'], 'raster': ['raster-opacity'], 'fill-extrusion': ['fill-extrusion-opacity'], 'heatmap': ['heatmap-opacity'] };
+        var alignments = { 'left': 'lefty', 'center': 'centered', 'right': 'righty', 'full': 'fully' };
+        
+        // VARIABLE GLOBAL PARA SABER EN QUÉ CAPITULO ESTAMOS
+        var currentActiveLayer = '';
+
+        function getLayerPaintType(layer) {
+            var layerType = map.getLayer(layer).type;
+            return layerTypes[layerType];
+        }
+
+        function setLayerOpacity(layer) {
+            var paintProps = getLayerPaintType(layer.layer);
+            paintProps.forEach(function (prop) {
+                var options = {};
+                if (layer.duration) {
+                    var transitionProp = prop + "-transition";
+                    options = { "duration": layer.duration };
+                    map.setPaintProperty(layer.layer, transitionProp, options);
+                }
+                map.setPaintProperty(layer.layer, prop, layer.opacity, options);
+            });
+        }
+
+        // FUNCION PARA ACTUALIZAR LA LEYENDA Y EL ESTADO
+        function updateChapterState(chapter) {
+            // 1. Actualizar Leyenda
+            var legend = document.getElementById('legend');
+            var bar = document.getElementById('legend-bar');
+            var title = document.getElementById('legend-title');
+            var min = document.getElementById('legend-min');
+            var max = document.getElementById('legend-max');
+
+            if (chapter.legendType === 'RENTA') {
+                legend.style.display = 'block';
+                title.innerText = 'Renta per Cápita (€)';
+                min.innerText = 'Baja';
+                max.innerText = 'Alta';
+                bar.style.background = 'linear-gradient(to right, #cfe1f2, #93c4de, #4a97c9, #1764ab, #062e52)'; 
+            } else if (chapter.legendType === 'CRIMINALIDAD') {
+                legend.style.display = 'block';
+                title.innerText = 'Criminalidad (Incidencias)';
+                min.innerText = 'Seguro';
+                max.innerText = 'Inseguro';
+                bar.style.background = 'linear-gradient(to right, #2ca02c, #ffff00, #d62728)';
+            } else {
+                legend.style.display = 'none';
+            }
+
+            // 2. Actualizar la capa activa globalmente
+            currentActiveLayer = chapter.activeLayer; 
+        }
+
+        var story = document.getElementById('story');
+        var features = document.createElement('div');
+        features.setAttribute('id', 'features');
+
+        var header = document.createElement('div');
+
+        if (config.title) {
+            var titleText = document.createElement('h1');
+            titleText.innerText = config.title;
+            header.appendChild(titleText);
+        }
+        if (config.subtitle) {
+            var subtitleText = document.createElement('h2');
+            subtitleText.innerText = config.subtitle;
+            header.appendChild(subtitleText);
+        }
+        if (config.byline) {
+            var bylineText = document.createElement('p');
+            bylineText.innerText = config.byline;
+            header.appendChild(bylineText);
+        }
+        if (header.innerText.length > 0) {
+            header.classList.add(config.theme);
+            header.setAttribute('id', 'header');
+            story.appendChild(header);
+        }
+
+        config.chapters.forEach((record, idx) => {
+            var container = document.createElement('div');
+            var chapter = document.createElement('div');
+            if (record.title) {
+                var title = document.createElement('h3');
+                title.innerText = record.title;
+                chapter.appendChild(title);
+            }
+            if (record.image) {
+                var image = new Image();
+                image.src = record.image;
+                chapter.appendChild(image);
+            }
+            if (record.description) {
+                var storyText = document.createElement('p');
+                storyText.innerHTML = record.description;
+                chapter.appendChild(storyText);
+            }
+            container.setAttribute('id', record.id);
+            container.classList.add('step');
+            if (idx === 0) container.classList.add('active');
+            chapter.classList.add(config.theme);
+            container.appendChild(chapter);
+            container.classList.add(alignments[record.alignment] || 'centered');
+            if (record.hidden) container.classList.add('hidden');
+            features.appendChild(container);
+        });
+
+        story.appendChild(features);
+
+        var footer = document.createElement('div');
+        if (config.footer) {
+            var footerText = document.createElement('p');
+            footerText.innerHTML = config.footer;
+            footer.appendChild(footerText);
+        }
+        if (footer.innerText.length > 0) {
+            footer.classList.add(config.theme);
+            footer.setAttribute('id', 'footer');
+            story.appendChild(footer);
+        }
+
+        mapboxgl.accessToken = config.accessToken;
+
+        var map = new mapboxgl.Map({
+            container: 'map',
+            style: config.style,
+            center: config.chapters[0].location.center,
+            zoom: config.chapters[0].location.zoom,
+            bearing: config.chapters[0].location.bearing,
+            pitch: config.chapters[0].location.pitch,
+            interactive: true,
+            projection: config.projection
+        });
+
+        // DESACTIVAR SCROLL PARA EVITAR CONFLICTOS
+        map.scrollZoom.disable();
+
+        if (config.inset) {
+            map.addControl(new GlobeMinimap({ ...config.insetOptions }), config.insetPosition);
+        }
+
+        var scroller = scrollama();
+
+        map.on("load", function () {
+            // 1. CONFIGURACIÓN 3D
+            if (config.use3dTerrain) {
+                map.addSource('mapbox-dem', {
+                    'type': 'raster-dem',
+                    'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+                    'tileSize': 512,
+                    'maxzoom': 14
+                });
+                map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': 1.5 });
+            }
+
+            // === [AÑADIDO] CAPA DE EDIFICIOS 3D ===
+            // Busca la capa de etiquetas para poner los edificios debajo del texto
+            var layers = map.getStyle().layers;
+            var labelLayerId;
+            for (var i = 0; i < layers.length; i++) {
+                if (layers[i].type === 'symbol' && layers[i].layout['text-field']) {
+                    labelLayerId = layers[i].id;
+                    break;
+                }
+            }
+
+            // Añade la capa de edificios 3D
+            map.addLayer(
+                {
+                    'id': '3d-buildings',
+                    'source': 'composite',
+                    'source-layer': 'building',
+                    'filter': ['==', 'extrude', 'true'],
+                    'type': 'fill-extrusion',
+                    'minzoom': 14, // Solo visible al hacer zoom (ej. capítulo final)
+                    'paint': {
+                        'fill-extrusion-color': '#aaa',
+                        // Usa la altura real de los datos
+                        'fill-extrusion-height': [
+                            'interpolate', ['linear'], ['zoom'],
+                            15, 0,
+                            15.05, ['get', 'height']
+                        ],
+                        'fill-extrusion-base': [
+                            'interpolate', ['linear'], ['zoom'],
+                            15, 0,
+                            15.05, ['get', 'min_height']
+                        ],
+                        'fill-extrusion-opacity': 0.6
+                    }
+                },
+                labelLayerId // Inserta la capa debajo de las etiquetas
+            );
+            // === [FIN CAPA 3D] ===
+
+            // 2. CAPA DE HOVER (Borde Amarillo)
+            map.addLayer({
+                'id': 'distrito-hover',
+                'type': 'line',
+                'source': 'composite', 
+                'source-layer': 'madrid_mapbox_ready', 
+                'paint': {
+                    'line-color': '#FFD700', // Amarillo
+                    'line-width': 4,
+                    'line-opacity': 0.9
+                },
+                'filter': ['==', 'name', ''] // Empieza vacío
+            });
+
+            // 3. INTERACTIVIDAD ROBUSTA
+            // En lugar de comprobar opacidad, usamos la variable currentActiveLayer del config.js
+            
+            // Lógica para el HOVER
+            map.on('mousemove', function(e) {
+                if (!currentActiveLayer) return; // Si no hay capa activa definida en config, no hacemos nada
+
+                // Buscamos features SOLO en la capa activa actual
+                var features = map.queryRenderedFeatures(e.point, { layers: [currentActiveLayer] });
+                
+                if (features.length > 0) {
+                    map.getCanvas().style.cursor = 'pointer';
+                    // Iluminamos el borde del distrito encontrado
+                    map.setFilter('distrito-hover', ['==', 'name', features[0].properties.name]);
+                } else {
+                    map.getCanvas().style.cursor = '';
+                    map.setFilter('distrito-hover', ['==', 'name', '']);
+                }
+            });
+
+            // Limpiar hover al salir del mapa
+            map.on('mouseleave', function() {
+                map.getCanvas().style.cursor = '';
+                map.setFilter('distrito-hover', ['==', 'name', '']);
+            });
+
+            // Lógica para el CLICK (POPUP)
+            map.on('click', function(e) {
+                if (!currentActiveLayer) return; // Si estamos en intro, no pasa nada
+
+                // Consultar SOLO la capa que el config dice que está activa
+                var features = map.queryRenderedFeatures(e.point, { layers: [currentActiveLayer] });
+                
+                if (features.length > 0) {
+                    var p = features[0].properties;
+                    var contenido = `<h3>${p.name}</h3>`;
+                    
+                    if(currentActiveLayer === 'RENTA') {
+                        contenido += `<p>💰 Renta Media: <b>${p.RENTA.toLocaleString()} €</b></p>`;
+                    } else if (currentActiveLayer === 'CRIMINALIDAD') {
+                        // [AÑADIDO] .toLocaleString() para formato de miles
+                        contenido += `<p>🚨 Incidencias: <b>${p.CRIMEN.toLocaleString()}</b></p>`;
+                    }
+                    
+                    new mapboxgl.Popup()
+                        .setLngLat(e.lngLat)
+                        .setHTML(contenido)
+                        .addTo(map);
+                }
+            });
+
+            // SCROLLAMA
+            scroller.setup({ step: '.step', offset: 0.5, progress: true })
+                .onStepEnter(async response => {
+                    var chapter = config.chapters.find(chap => chap.id === response.element.id);
+                    response.element.classList.add('active');
+                    map[chapter.mapAnimation || 'flyTo'](chapter.location);
+                    
+                    // Actualizamos la variable global y la leyenda
+                    updateChapterState(chapter);
+
+                    if (chapter.onChapterEnter.length > 0) chapter.onChapterEnter.forEach(setLayerOpacity);
+                    if (chapter.callback) window[chapter.callback]();
+                    if (chapter.rotateAnimation) {
+                        map.once('moveend', () => {
+                            const rotateNumber = map.getBearing();
+                            map.rotateTo(rotateNumber + 180, { duration: 30000, easing: function (t) { return t; } });
+                        });
+                    }
+                })
+                .onStepExit(response => {
+                    var chapter = config.chapters.find(chap => chap.id === response.element.id);
+                    response.element.classList.remove('active');
+                    if (chapter.onChapterExit.length > 0) chapter.onChapterExit.forEach(setLayerOpacity);
+                });
+        });
+    </script>
+</body>
+</html>
